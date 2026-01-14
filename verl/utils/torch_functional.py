@@ -200,9 +200,7 @@ def logprobs_from_logits_v2(logits: torch.FloatTensor, labels: torch.Tensor) -> 
     return logprobs_labels
 
 
-def clip_by_value(
-    x: torch.Tensor, tensor_min: torch.Tensor, tensor_max: torch.Tensor
-) -> torch.Tensor:
+def clip_by_value(x: torch.Tensor, tensor_min: torch.Tensor, tensor_max: torch.Tensor) -> torch.Tensor:
     """Clip tensor values to a range defined by tensor bounds.
 
     Extension of torch.clamp that supports tensor-valued min/max bounds
@@ -265,9 +263,7 @@ def entropy_from_logits_with_chunking(logits: torch.Tensor, chunk_size: int = 20
     return entropy
 
 
-def masked_sum(
-    values: torch.Tensor, mask: torch.Tensor, axis: int | tuple[int, ...] | None = None
-) -> torch.Tensor:
+def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis: int | tuple[int, ...] | None = None) -> torch.Tensor:
     """Compute sum of tensor values where mask is True.
 
     NaN values outside the mask are replaced with zeros to prevent
@@ -389,9 +385,7 @@ def compute_grad_norm(model: nn.Module) -> float:
     return total_grad_square
 
 
-def broadcast_dict_tensor(
-    tensors: dict[str, torch.Tensor] | TensorDict, src: int, group
-) -> None:
+def broadcast_dict_tensor(tensors: dict[str, torch.Tensor] | TensorDict, src: int, group) -> None:
     """Broadcast all tensors in a dictionary from source rank to all ranks.
 
     Iterates over all tensors in the dictionary and broadcasts each one
@@ -683,6 +677,23 @@ def post_process_logits(input_ids, logits, temperature, top_k, top_p):
     return logits
 
 
+def calculate_sum_pi_squared_from_logits(logits: torch.Tensor):
+    """
+    Compute exact sum of squared probabilities from logits.
+    Formula: Σπ² = exp(logsumexp(2*logits) - 2*logsumexp(logits))
+
+    Used for optimal baseline variance reduction as described in
+    "What Matters for Model Merging at Scale?" (arXiv:2410.03617)
+
+    Args:
+        logits: Logits tensor (..., vocab_size).
+
+    Returns:
+        Sum of squared probabilities tensor (...).
+    """
+    return torch.exp(torch.logsumexp(2.0 * logits, dim=-1) - 2.0 * torch.logsumexp(logits, dim=-1))
+
+
 """
 Optimizer related
 """
@@ -957,6 +968,31 @@ def distributed_masked_mean(local_tensor, local_mask):
 
     global_mean = local_sum / local_num
     return global_mean
+
+
+def expand_as_nested(tensor: torch.Tensor, nested_tensor: torch.Tensor) -> torch.Tensor:
+    """
+
+    Args:
+        tensor: a tensor with shape (bsz,)
+        nested_tensor: a nested tensor with shape (bsz, xxx)
+
+    Returns:
+        a tensor with the same shape as nested_tensor
+
+    """
+    assert nested_tensor.is_nested, "nested_tensor must be nested"
+    assert tensor.shape[0] == nested_tensor.shape[0], (
+        f"The batch shape must be the same. Got {tensor.shape[0]} vs {nested_tensor.shape[0]}"
+    )
+    assert len(tensor.shape) == 1, "The ndim of tensor must be 1"
+    assert len(nested_tensor.shape) == 2, "The ndim of nested_tensor must be 2"
+
+    offsets = nested_tensor.offsets()
+    seqlens = offsets.diff()
+    output = torch.repeat_interleave(tensor, seqlens, dim=0)
+    output = torch.nested.nested_tensor_from_jagged(values=output, offsets=offsets)
+    return output
 
 
 @contextmanager
